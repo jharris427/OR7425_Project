@@ -1,0 +1,177 @@
+from docplex.mp.model import Model
+import numpy as np
+
+# input file name is set as mat_raw.txt. remember to change it if you use a different file
+tumor_file = "/Users/Sam/PycharmProjects/ORProject/actualexample/tumor_raw.txt"
+critical_file = "/Users/Sam/PycharmProjects/ORProject/actualexample/critical_raw.txt"
+beam_file = "/Users/Sam/PycharmProjects/ORProject/actualexample/beam_raw.txt"
+
+
+def convert_neighbors(input_array):
+    '''Create a matrix where elements bordering 1s are 1s, if they are not tumors
+  '''
+    # create new zeros array to return
+    array = np.array(input_array)[0]
+    neighboring_array = np.zeros_like(array)
+    array_shape = np.shape(array)
+    max_edge_x = array_shape[0] - 1
+    max_edge_y = array_shape[1] - 1
+
+    for (x, y), val in np.ndenumerate(array):
+        # [0] [1] [2]
+        # [3] [*] [5]
+        # [6] [7] [8]
+        # * refers to current cell
+
+        if (val == 1):
+            if (x == 0):
+                if (y != 0):
+                    neighboring_array[x, y - 1] = 1 if array[x, y - 1] == 0 else 0
+                    neighboring_array[x + 1, y - 1] = 1 if array[x + 1, y - 1] == 0 else 0
+                    if (y != max_edge_y):
+                        neighboring_array[x, y + 1] = 1 if array[x, y + 1] == 0 else 0
+                        neighboring_array[x + 1, y + 1] = 1 if array[x + 1, y + 1] == 0 else 0
+                neighboring_array[x + 1, y] = 1 if array[x + 1, y] == 0 else 0
+            elif (x == max_edge_x):
+                if (y != 0):
+                    neighboring_array[x, y - 1] = 1 if array[x, y - 1] == 0 else 0
+                    neighboring_array[x - 1, y - 1] = 1 if array[x - 1, y - 1] == 0 else 0
+                    if (y != max_edge_y):
+                        neighboring_array[x, y + 1] = 1 if array[x, y + 1] == 0 else 0
+                        neighboring_array[x - 1, y + 1] = 1 if array[x - 1, y + 1] == 0 else 0
+                neighboring_array[x - 1, y] = 1 if array[x - 1, y] == 0 else 0
+            else:
+                if (y != 0):
+                    neighboring_array[x, y - 1] = 1 if array[x, y - 1] == 0 else 0
+                    neighboring_array[x - 1, y - 1] = 1 if array[x - 1, y - 1] == 0 else 0
+                    neighboring_array[x + 1, y - 1] = 1 if array[x + 1, y - 1] == 0 else 0
+                    if (y != max_edge_y):
+                        neighboring_array[x, y + 1] = 1 if array[x, y + 1] == 0 else 0
+                        neighboring_array[x - 1, y + 1] = 1 if array[x - 1, y + 1] == 0 else 0
+                        neighboring_array[x + 1, y + 1] = 1 if array[x + 1, y + 1] == 0 else 0
+                neighboring_array[x - 1, y] = 1 if array[x - 1, y] == 0 else 0
+                neighboring_array[x + 1, y] = 1 if array[x + 1, y] == 0 else 0
+    return neighboring_array
+
+
+class modeling_data():
+
+    def __init__(self):
+        self.num_matrices = None
+        self.num_rows = None
+        self.num_columns = None
+        self.matrices = [[]]
+
+    def get_data_from_file(self, file_name):
+        data_file_name = file_name
+        file = open(data_file_name, 'r')
+        lines = file.readlines()
+        for line in lines:
+            l = line[:-1].split()
+            if l:
+                self.matrices[-1].append([])
+                for i in l:
+                    self.matrices[-1][-1].append(float(i))
+            else:
+                self.matrices.append([])
+
+        self.num_matrices = len(self.matrices)
+        self.num_rows = len(self.matrices[0])
+        self.num_columns = len(self.matrices[0][0])
+
+        for i in range(self.num_matrices):
+            if self.matrices[i] == []:
+                self.matrices.pop(i)
+                self.num_matrices -= 1
+                break
+
+
+def build_model(beam_matrices, tumor_matrix, critical_matrix, treatment_upper_bound,treatment_lower_bound, pen_tumor, pen_crit, pen_border):
+    model = Model(log_output=True)
+
+    # get the border of the tumor
+    critical_border = convert_neighbors(critical_matrix.matrices)
+
+    # Variables: x_i_j_k with k being the identifiers for the beam matrices
+
+    x = model.continuous_var_list(keys=beam_matrices.num_matrices, name="beam_strength")
+    s_r = model.continuous_var_matrix(keys1=beam_matrices.num_rows, keys2=beam_matrices.num_columns,
+                                      name="critical_relax")
+    s_t = model.continuous_var_matrix(keys1=beam_matrices.num_rows, keys2=beam_matrices.num_columns, name="tumor_relax")
+
+    # critical area constraint <= 2
+    for i in range(0, beam_matrices.num_rows):
+        for j in range(0, beam_matrices.num_columns):
+            e = model.linear_expr()
+            add = False
+            for k in range(0, beam_matrices.num_matrices):
+                if critical_matrix.matrices[0][i][j] == 1 and beam_matrices.matrices[k][i][j] > 0:
+                    e += (x[k] * beam_matrices.matrices[k][i][j])
+                    add = True
+            if add:
+                model.add_constraint(e <= treatment_upper_bound + s_r[(i, j)])
+
+    # tumor area constraint >= 10
+    for i in range(beam_matrices.num_rows):
+        for j in range(beam_matrices.num_columns):
+            e = model.linear_expr()
+            add = False
+            for k in range(beam_matrices.num_matrices):
+                if tumor_matrix.matrices[0][i][j] == 1 and beam_matrices.matrices[k][i][j] > 0:
+                    e += (x[k] * beam_matrices.matrices[k][i][j])
+                    add = True
+            if add:
+                model.add_constraint(e >= treatment_lower_bound - s_t[(i, j)])
+
+    #non-negativity constraints
+    for k in range(0, beam_matrices.num_matrices):
+        model.add_constraint(r[(k, w)] >= 0)
+
+    # create objective function
+    e = model.linear_expr()
+    for i in range(beam_matrices.num_rows):
+        for j in range(beam_matrices.num_columns):
+            for k in range(beam_matrices.num_matrices):
+                e += x[k] * beam_matrices.matrices[k][i][j] * critical_matrix.matrices[0][i][j]
+                e += x[k] * beam_matrices.matrices[k][i][j] * critical_border[i][j] / pen_border
+
+            e += pen_tumor * s_t[(i, j)] + pen_crit * s_r[(i, j)]
+
+    model.minimize(e)
+
+    return model
+
+
+def print_result(filename, vars, data):
+    file = open(filename, 'w')
+    for i in range(data.num_rows):
+        out = 0
+        for j in range(data.num_columns):
+            for k in range(data.num_matrices):
+                out += vars[k].solution_value * data.matrices[k][i][j]
+            file.write(str(out) + '\t')
+        file.write('\n')
+
+
+tumor = modeling_data()
+tumor.get_data_from_file(tumor_file)
+
+critical = modeling_data()
+critical.get_data_from_file(critical_file)
+
+beam = modeling_data()
+beam.get_data_from_file(beam_file)
+
+if True == True:
+
+    model_1 = build_model(beam_matrices=beam, tumor_matrix=tumor, critical_matrix=critical,
+                          treatment_upper_bound=2, treatment_lower_bound=10,
+                          pen_tumor=100_000, pen_crit=100_000, pen_border=2)
+    s = model_1.solve()
+    print("Objective value is {0}".format(s.get_objective_value()))
+
+    for var, value in s.iter_var_values():
+        print("Variable {0} is equal to {1}".format(var, value))
+
+    x_vars = model_1.find_matching_vars(pattern="beam_strength_")
+    print_result("p3_results_actual.out", x_vars, beam)
