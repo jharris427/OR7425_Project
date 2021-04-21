@@ -1,4 +1,6 @@
-# OR7425_Project
+# OR7425 Final Project
+*Sam Benford, Sam Caron, Jon Harris*
+
 This is our team's Spring 2021 OR7425 Final Project.
 
 All related code files as well as the final report can be attached. Assignment details are as follows:
